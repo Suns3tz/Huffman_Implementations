@@ -3,42 +3,114 @@
 #include <string.h>
 #include <stdint.h>
 #include <pthread.h>
-#include <openssl/md5.h>
-
 #include "huffman_pthread.h"
+#include "md5.h"
 
-static long leerCabecera3Bytes(FILE* archivo) {
-    unsigned char byte1 = fgetc(archivo);
-    unsigned char byte2 = fgetc(archivo);
-    unsigned char byte3 = fgetc(archivo);
-    return ((long)byte1 << 16) | ((long)byte2 << 8) | byte3;
-}
-
-static void leerMD5Header(FILE* archivo, unsigned char* md5Guardado) {
-    if (fread(md5Guardado, 1, 16, archivo) != 16) {
-        memset(md5Guardado, 0, 16);
+int leerCatalogoArchivoUnificado(const char *archivePath, SharedContext *ctx) {
+    FILE *in = fopen(archivePath, "rb");
+    if (!in) {
+        perror("Error al abrir archivo unificado .huff para lectura");
+        return -1;
     }
-}
 
-void restaurarNombreSinHuff(const char* huffName, char* restoredName) {
-    strcpy(restoredName, huffName);
-    char *extension = strstr(restoredName, ".huff");
-    if (extension != NULL) {
-        *extension = '\0';
-    } else {
-        strcat(restoredName, ".out");
+    // 1. Cantidad de Archivos (4 bytes)
+    uint32_t totalFiles;
+    if (fread(&totalFiles, sizeof(uint32_t), 1, in) != 1) {
+        fprintf(stderr, "Error al leer cantidad de archivos en '%s'.\n", archivePath);
+        fclose(in);
+        return -1;
     }
+
+    // 2. Indicador de Carpeta vs Archivo Solitario (1 byte)
+    uint8_t isDir;
+    if (fread(&isDir, sizeof(uint8_t), 1, in) != 1) {
+        fprintf(stderr, "Error al leer indicador de tipo en '%s'.\n", archivePath);
+        fclose(in);
+        return -1;
+    }
+    ctx->isDirectory = (int)isDir;
+
+    // 3. Tabla Global de Frecuencias de Huffman (1024 bytes: 256 * 4 bytes)
+    uint32_t freq32[256];
+    if (fread(freq32, sizeof(uint32_t), 256, in) != 256) {
+        fprintf(stderr, "Error al leer tabla de frecuencias global en '%s'.\n", archivePath);
+        fclose(in);
+        return -1;
+    }
+
+    for (int i = 0; i < 256; i++) {
+        ctx->ASCIIcount[i] = (long)freq32[i];
+    }
+
+    // Reasignar arreglo de tareas
+    if (ctx->taskCapacity < (int)totalFiles) {
+        ctx->taskCapacity = (int)totalFiles + 16;
+        ctx->tasks = (FileTask*)realloc(ctx->tasks, ctx->taskCapacity * sizeof(FileTask));
+    }
+    ctx->taskCount = (int)totalFiles;
+
+    // 4. Leer Catálogo de Archivos
+    for (int i = 0; i < ctx->taskCount; i++) {
+        FileTask *t = &ctx->tasks[i];
+        memset(t, 0, sizeof(FileTask));
+
+        uint16_t pathLen;
+        if (fread(&pathLen, sizeof(uint16_t), 1, in) != 1) break;
+        if (fread(t->relativePath, 1, pathLen, in) != pathLen) break;
+        t->relativePath[pathLen] = '\0';
+
+        if (fread(&t->originalSize, sizeof(uint64_t), 1, in) != 1) break;
+        if (fread(&t->compressedSize, sizeof(uint64_t), 1, in) != 1) break;
+        if (fread(t->md5Original, 1, 16, in) != 16) break;
+
+        t->compressedBuffer = NULL;
+    }
+
+    // 5. Calcular offsets de datos (donde termina el catálogo y empiezan los bits)
+    uint64_t currentOffset = (uint64_t)ftell(in);
+    for (int i = 0; i < ctx->taskCount; i++) {
+        FileTask *t = &ctx->tasks[i];
+        t->dataOffset = currentOffset;
+        currentOffset += t->compressedSize;
+
+        // Construir ruta donde se restaurará
+        if (ctx->isDirectory) {
+            snprintf(t->restoredPath, sizeof(t->restoredPath), "%s/%s", ctx->basePath, t->relativePath);
+        } else {
+            const char *slash = strrchr(archivePath, '/');
+            if (slash) {
+                int dirLen = (int)(slash - archivePath);
+                if (dirLen == 0) {
+                    snprintf(t->restoredPath, sizeof(t->restoredPath), "/%s", t->relativePath);
+                } else {
+                    snprintf(t->restoredPath, sizeof(t->restoredPath), "%.*s/%s", dirLen, archivePath, t->relativePath);
+                }
+            } else {
+                snprintf(t->restoredPath, sizeof(t->restoredPath), "%s", t->relativePath);
+            }
+        }
+    }
+
+    fclose(in);
+
+    // Reconstruir árbol de Huffman y tabla de códigos en memoria compartida
+    ctx->root = buildHuffmanTree(ctx->ASCIIcount);
+    int bufferRuta[256];
+    generarTablaCodigos(ctx->root, bufferRuta, 0, ctx->HuffmanCodesArray);
+
+    return 0;
 }
 
-static void descomprimirFlujo(FILE* inFile, FILE* outFile, long originalSize, MinHeapNode* root) {
+static void descomprimirFlujoDesdeOffset(FILE* inFile, FILE* outFile, uint64_t originalSize, uint64_t compressedSize, MinHeapNode* root) {
     if (root == NULL) return;
 
     MinHeapNode* currentNode = root;
     int bitBuffer = 0;
     int bitsLeft = 0;
-    long bytesWritten = 0;
+    uint64_t bytesWritten = 0;
+    uint64_t compressedBytesRead = 0;
 
-    // Caso de un solo símbolo único
+    // Caso de símbolo único
     if (root->left == NULL && root->right == NULL) {
         while (bytesWritten < originalSize) {
             fputc(root->data, outFile);
@@ -47,10 +119,11 @@ static void descomprimirFlujo(FILE* inFile, FILE* outFile, long originalSize, Mi
         return;
     }
 
-    while (bytesWritten < originalSize) {
+    while (bytesWritten < originalSize && compressedBytesRead <= compressedSize) {
         if (bitsLeft == 0) {
             bitBuffer = fgetc(inFile);
             if (bitBuffer == EOF) break;
+            compressedBytesRead++;
             bitsLeft = 8;
         }
 
@@ -72,20 +145,17 @@ static void descomprimirFlujo(FILE* inFile, FILE* outFile, long originalSize, Mi
     }
 }
 
-int descomprimirArchivoIndividualPthread(FileTask *task, MinHeapNode* root) {
-    FILE *in = fopen(task->compressedPath, "rb");
+static int descomprimirArchivoDesdeOffset(const char *archivePath, FileTask *task, MinHeapNode *root) {
+    FILE *in = fopen(archivePath, "rb");
     if (!in) {
-        perror("Error al abrir archivo comprimido para descompresión");
+        perror("Error al abrir archivo unificado para descompresión");
         return 0;
     }
 
-    // 1. Leer tamaño original (3 bytes)
-    long originalSize = leerCabecera3Bytes(in);
+    fseek(in, (long)task->dataOffset, SEEK_SET);
 
-    // 2. Leer firma MD5 original (16 bytes)
-    leerMD5Header(in, task->md5Original);
+    crearDirectoriosPadre(task->restoredPath);
 
-    // 3. Crear archivo de salida para restauración
     FILE *out = fopen(task->restoredPath, "wb");
     if (!out) {
         perror("Error al crear archivo restaurado");
@@ -93,15 +163,13 @@ int descomprimirArchivoIndividualPthread(FileTask *task, MinHeapNode* root) {
         return 0;
     }
 
-    // 4. Decodificar flujo de bits con el árbol de Huffman compartido
-    descomprimirFlujo(in, out, originalSize, root);
+    descomprimirFlujoDesdeOffset(in, out, task->originalSize, task->compressedSize, root);
 
     fclose(in);
     fclose(out);
 
-    // 5. Verificar integridad recalculando MD5 del archivo restaurado
+    // Validar integridad MD5
     calcularMD5(task->restoredPath, task->md5Restored);
-
     if (memcmp(task->md5Original, task->md5Restored, 16) == 0) {
         task->md5Verified = 1;
         return 1;
@@ -127,9 +195,7 @@ static void* workerDescompresion(void *arg) {
         if (taskIdx == -1) break;
 
         FileTask *task = &ctx->tasks[taskIdx];
-        if (!task->isHuff && task->compressedSize == 0) continue;
-
-        if (descomprimirArchivoIndividualPthread(task, ctx->root)) {
+        if (descomprimirArchivoDesdeOffset(ctx->archivePath, task, ctx->root)) {
             pthread_mutex_lock(&ctx->statsMutex);
             ctx->totalVerifiedFiles++;
             pthread_mutex_unlock(&ctx->statsMutex);
@@ -139,7 +205,7 @@ static void* workerDescompresion(void *arg) {
     return NULL;
 }
 
-void descomprimirParalelo(SharedContext *ctx) {
+void descomprimirParaleloDesdeUnificado(SharedContext *ctx) {
     ctx->nextTaskIdx = 0;
     pthread_t *threads = (pthread_t*)malloc(ctx->numThreads * sizeof(pthread_t));
     ThreadArg *args = (ThreadArg*)malloc(ctx->numThreads * sizeof(ThreadArg));
@@ -156,5 +222,9 @@ void descomprimirParalelo(SharedContext *ctx) {
 
     free(threads);
     free(args);
-}
 
+    // Si todos los archivos fueron verificados exitosamente y !keepFiles, eliminar el contenedor .huff
+    if (!ctx->keepFiles && ctx->totalVerifiedFiles == ctx->taskCount) {
+        remove(ctx->archivePath);
+    }
+}

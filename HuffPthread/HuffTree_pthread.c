@@ -173,3 +173,44 @@ void liberarArbol(MinHeapNode* root) {
     free(root);
 }
 
+void guardarArbolEnDisco(const char *rutaBase, long countArray[256]) {
+    char treePath[1024];
+    struct stat st;
+    if (stat(rutaBase, &st) == 0 && S_ISDIR(st.st_mode)) {
+        snprintf(treePath, sizeof(treePath), "%s/huffman.tree", rutaBase);
+    } else {
+        snprintf(treePath, sizeof(treePath), "%s.tree", rutaBase);
+    }
+    FILE *f = fopen(treePath, "wb");
+    if (f) {
+        fwrite(countArray, sizeof(long), 256, f);
+        fclose(f);
+    }
+}
+
+int cargarArbolDeDisco(const char *rutaBase, long countArray[256]) {
+    char treePath[1024];
+    struct stat st;
+    if (stat(rutaBase, &st) == 0 && S_ISDIR(st.st_mode)) {
+        snprintf(treePath, sizeof(treePath), "%s/huffman.tree", rutaBase);
+    } else {
+        snprintf(treePath, sizeof(treePath), "%s.tree", rutaBase);
+    }
+    FILE *f = fopen(treePath, "rb");
+    if (!f) return 0;
+    size_t r = fread(countArray, sizeof(long), 256, f);
+    fclose(f);
+    return (r == 256);
+}
+
+void eliminarArbolDeDisco(const char *rutaBase) {
+    char treePath[1024];
+    struct stat st;
+    if (stat(rutaBase, &st) == 0 && S_ISDIR(st.st_mode)) {
+        snprintf(treePath, sizeof(treePath), "%s/huffman.tree", rutaBase);
+    } else {
+        snprintf(treePath, sizeof(treePath), "%s.tree", rutaBase);
+    }
+    remove(treePath);
+}
+

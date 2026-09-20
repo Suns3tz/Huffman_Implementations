@@ -7,7 +7,7 @@
 #include <pthread.h>
 #include <sys/stat.h>
 
-// Estructura del nodo del árbol de Huffman y MinHeap
+// Nodo del árbol de Huffman y MinHeap
 typedef struct MinHeapNode {
     unsigned char data; 
     long frequency;
@@ -15,17 +15,18 @@ typedef struct MinHeapNode {
     struct MinHeapNode* right;
 } MinHeapNode;
 
-// Información y estado de cada archivo en la cola de trabajo
+// Información y estado de cada archivo en la cola de trabajo y catálogo
 typedef struct {
-    char originalPath[1024];
-    char compressedPath[1024];
-    char restoredPath[1024];
-    long originalSize;
-    long compressedSize;
-    unsigned char md5Original[16];
-    unsigned char md5Restored[16];
-    int md5Verified; // 1 si coincide, 0 si falla
-    int isHuff;      // 1 si el archivo original termina en .huff
+    char originalPath[1024];      // Ruta en disco original (ej: /dir/sub/doc.txt)
+    char relativePath[1024];      // Nombre relativo en catálogo (ej: doc.txt o sub/doc.txt)
+    char restoredPath[1024];      // Ruta donde se restaura el archivo
+    uint64_t originalSize;        // Tamaño original descomprimido (8 bytes)
+    uint64_t compressedSize;      // Tamaño comprimido en bytes (8 bytes)
+    uint64_t dataOffset;          // Offset calculado dentro del archivo .huff
+    unsigned char md5Original[16];// MD5 Signature original (16 bytes)
+    unsigned char md5Restored[16];// MD5 Signature del archivo restaurado
+    int md5Verified;              // 1 si coincide, 0 si falla
+    unsigned char *compressedBuffer; // Buffer en memoria RAM para compresión
 } FileTask;
 
 // Estructura en Memoria Compartida para coordinar los hilos POSIX
@@ -45,14 +46,19 @@ typedef struct {
     char* HuffmanCodesArray[256];
 
     // Estadísticas globales compartidas
-    long totalOriginalBytes;
-    long totalCompressedBytes;
+    uint64_t totalOriginalBytes;
+    uint64_t totalCompressedBytes;
     int totalFilesProcessed;
     int totalVerifiedFiles;
     pthread_mutex_t statsMutex;  // Mutex para actualizar estadísticas globales
 
-    // Configuración de concurrencia
+    // Configuración de concurrencia y retención de archivos
     int numThreads;
+    int keepFiles;               // 1: Conservar originales y .huff; 0: Eliminar residuos
+    int isDirectory;             // 1: se comprimió una carpeta; 0: archivo solitario
+    char archivePath[1024];      // Ruta del archivo unificado .huff
+    char basePath[1024];         // Directorio base para rutas relativas
+    char originalTarget[1024];   // Ruta exacta del objetivo original ingresado por el usuario
 } SharedContext;
 
 // Estructura de argumento individual para cada hilo de trabajo
@@ -62,9 +68,9 @@ typedef struct {
 } ThreadArg;
 
 // Prototipos de Escaneo y Frecuencias
-int inicializarContexto(SharedContext *ctx, int numThreads);
+int inicializarContexto(SharedContext *ctx, int numThreads, int keepFiles, const char *ruta);
 void liberarContexto(SharedContext *ctx);
-void escanearRutaRecursiva(const char *path, SharedContext *ctx);
+void escanearRutaRecursiva(const char *path, SharedContext *ctx, const char *basePath);
 void calcularFrecuenciasParalelo(SharedContext *ctx);
 
 // Prototipos de Árbol y Códigos
@@ -73,18 +79,18 @@ void generarTablaCodigos(MinHeapNode* root, int arr[], int top, char* codesArray
 void limpiarTablaCodigos(char* codesArray[256]);
 void liberarArbol(MinHeapNode* root);
 
-// Prototipos de Compresión Paralela
-void comprimirParalelo(SharedContext *ctx);
-void comprimirArchivoIndividualPthread(FileTask *task, char* codesArray[256]);
+// Prototipos de Compresión Unificada
+void comprimirParaleloABuffers(SharedContext *ctx);
+int empaquetarArchivoUnificado(SharedContext *ctx);
 
-// Prototipos de Descompresión Paralela
-void descomprimirParalelo(SharedContext *ctx);
-int descomprimirArchivoIndividualPthread(FileTask *task, MinHeapNode* root);
+// Prototipos de Descompresión Unificada
+int leerCatalogoArchivoUnificado(const char *archivePath, SharedContext *ctx);
+void descomprimirParaleloDesdeUnificado(SharedContext *ctx);
 
-// Utilidades Criptográficas y Auxiliares
+// Utilidades Criptográficas y de Rutas
 void calcularMD5(const char *rutaArchivo, unsigned char *output);
-void cambiarExtensionAHuff(const char* ogName, char* newName);
-void restaurarNombreSinHuff(const char* huffName, char* restoredName);
+void calcularMD5Buffer(const unsigned char *buffer, size_t len, unsigned char *output);
+void crearDirectoriosPadre(const char *filePath);
+void eliminarRutaRecursiva(const char *path);
 
 #endif
-

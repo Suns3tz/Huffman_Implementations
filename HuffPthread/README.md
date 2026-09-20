@@ -1,31 +1,33 @@
-# Implementación Paralela con Pthreads (HuffPthread)
+# Implementación Paralela con Pthreads (HuffPthread) - Archivo Único
 
-Esta carpeta contendrá la versión paralelizada del algoritmo de compresión y descompresión de Huffman utilizando hilos de ejecución POSIX (**Pthreads**).
-Esta carpeta contiene la implementación concurrente del algoritmo de compresión y descompresión de Huffman utilizando hilos POSIX (**Pthreads**) y **memoria compartida** para acelerar el procesamiento de archivos y directorios.
+Esta carpeta contiene la implementación concurrente del algoritmo de compresión y descompresión de Huffman utilizando hilos POSIX (**Pthreads**) y **memoria compartida**, empaquetando todos los archivos de un directorio en un **único archivo contenedor `.huff`** (similar a `zip` o `tar.gz`).
 
-## Objetivos de la implementación
-- Distribuir el procesamiento (conteo de frecuencias, compresión/descompresión de archivos o bloques) entre múltiples hilos (`pthread_create`, `pthread_join`).
-- Sincronización y manejo de secciones críticas mediante mutexes o barreras si es necesario.
-- Medición de tiempos de ejecución para cálculo de métricas de aceleración (*speedup*) y eficiencia.
 ## Características de la Implementación
-- **Memoria compartida y cola de trabajo dinámica:** Los archivos descubiertos en el directorio se encolan en una estructura compartida (`SharedContext`). Los hilos toman tareas de forma dinámica (*work-stealing* / cola protegida por mutex), garantizando un balance óptimo de carga entre archivos de diferente tamaño.
-- **Conteo de frecuencias paralelo:** Cada hilo acumula frecuencias en un buffer privado para eliminar contención y *false sharing*, consolidando finalmente en la tabla global compartida mediante un mutex.
-- **Árbol y códigos de solo lectura:** El árbol de Huffman y la tabla de códigos se construyen en RAM compartida y se acceden de forma concurrente en modo solo lectura por todos los hilos durante la compresión y descompresión (cero bloqueos).
-- **Verificación de integridad MD5:** Calcula la firma MD5 de 16 bytes y la almacena en los metadatos del archivo `.huff`. Durante la descompresión, recalcula el MD5 del archivo restaurado y verifica la salud de los datos (`memcmp`).
-- **Medición de alta precisión:** Tiempos medidos con `clock_gettime(CLOCK_MONOTONIC)` para cada fase (conteo, árbol, compresión, descompresión y tiempo total).
+- **Empaquetado en un Único Archivo Contenedor (`<directorio>.huff`):**
+  - **Encabezado Global:** Contiene la firma identificadora (`HUFF`), la versión, la cantidad de archivos y la tabla global de frecuencias de Huffman (1024 bytes).
+  - **Catálogo de Archivos:** Metadatos individuales de cada archivo (ruta relativa, tamaño original, tamaño comprimido, *offset* en bytes dentro del archivo contenedor y firma criptográfica MD5 de 16 bytes).
+  - **Flujos de Datos Continuos:** Los flujos de bits comprimidos de todos los archivos empaquetados consecutivamente.
+- **Compresión Concurrente en RAM (Cero contención de disco):**
+  - Cada hilo de trabajo comprime un archivo directamente a un buffer en memoria RAM (`malloc`).
+  - Una vez procesados todos los archivos en paralelo, se vuelcan ordenadamente al archivo único contenedor `.huff`.
+- **Descompresión Concurrente por Offsets:**
+  - Al descomprimir, los hilos leen concurrentemente desde sus respectivos desplazamientos (*offsets*) dentro del archivo `.huff`, reconstruyen la estructura de directorios y extraen los archivos.
+- **Verificación de Integridad MD5:**
+  - Cada archivo extraído es recalculado con MD5 y comparado contra la firma original almacenada en el catálogo (`[OK] Válido`).
+- **Comportamiento Limpio Estilo UNIX:**
+  - Al comprimir (`-c`), se genera `<directorio>.huff` y se eliminan los archivos originales (a menos que se use `-k`).
+  - Al descomprimir (`-d`), se restauran los archivos originales y se elimina el contenedor `.huff` (a menos que se use `-k`).
+  - En ciclo completo (`-all`), se prueba todo el ciclo y se deja la carpeta limpia con los archivos originales intactos.
+- **Bandera `-k` / `--keep`:**
+  - Conserva tanto los archivos originales como el archivo contenedor `.huff`.
 
 ---
 
 ## Compilación
 
-Dentro de esta carpeta:
 ```bash
+cd "/home/vboxuser/Desktop/Proyecto 1/Huffman_Implementations/HuffPthread"
 make
-```
-
-Para limpiar los binarios y objetos:
-```bash
-make clean
 ```
 
 ---
@@ -33,25 +35,30 @@ make clean
 ## Uso
 
 ```bash
-./huffPthread <directorio_o_archivo> [num_hilos] [modo: -c | -d | -all]
+./huffPthread <directorio_o_archivo.huff> [num_hilos] [modo: -c | -d | -all] [-k | --keep]
 ```
 
 ### Argumentos:
-- `<directorio_o_archivo>`: Ruta del archivo o carpeta a procesar.
-- `[num_hilos]`: (Opcional) Número de hilos concurrentes a utilizar. Por defecto utiliza todos los núcleos disponibles en el procesador (`sysconf(_SC_NPROCESSORS_ONLN)`).
-- `[modo]`: (Opcional)
-  - `-c`: Solo comprimir los archivos a `.huff`.
-  - `-d`: Solo descomprimir los archivos `.huff`.
-  - `-all`: (Por defecto) Realizar el ciclo completo de compresión, descompresión y verificación de integridad MD5.
+- `<directorio_o_archivo.huff>`: Ruta de la carpeta a comprimir o del archivo `.huff` a descomprimir.
+- `[num_hilos]`: (Opcional) Número de hilos concurrentes. Por defecto usa los núcleos detectados del CPU.
+- `[modo]`:
+  - `-c`: Comprime la carpeta en un único archivo `<nombre>.huff`.
+  - `-d`: Descomprime y extrae los archivos desde el contenedor `<nombre>.huff`.
+  - `-all`: (Por defecto) Ciclo completo de compresión, extracción y verificación MD5.
+- `-k, --keep`: (Opcional) Conservar tanto los archivos originales como el `.huff`.
 
 ### Ejemplos:
+
 ```bash
-# Ejecutar ciclo completo con detección automática de hilos
-./huffPthread ../../pruebas
+# 1. Comprimir una carpeta completa en un solo archivo .huff (con 4 hilos):
+./huffPthread "../../test_data/libros_gutenberg" 4 -c
 
-# Comprimir utilizando 8 hilos
-./huffPthread ../../pruebas 8 -c
+# 2. Descomprimir y extraer todos los archivos del .huff (con 4 hilos):
+./huffPthread "../../test_data/libros_gutenberg.huff" 4 -d
 
-# Descomprimir utilizando 4 hilos
-./huffPthread ../../pruebas 4 -d
+# 3. Comprimir conservando la carpeta original:
+./huffPthread "../../test_data/libros_gutenberg" 4 -c -k
+
+# 4. Probar rendimiento completo sin dejar residuos:
+./huffPthread "../../test_data/libros_gutenberg" 4 -all
 ```
