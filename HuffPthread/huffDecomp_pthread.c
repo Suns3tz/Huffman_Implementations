@@ -13,6 +13,10 @@ int leerCatalogoArchivoUnificado(const char *archivePath, SharedContext *ctx) {
         return -1;
     }
 
+    fseek(in, 0, SEEK_END);
+    ctx->archiveFileSize = (uint64_t)ftell(in);
+    fseek(in, 0, SEEK_SET);
+
     // 1. Cantidad de Archivos (4 bytes)
     uint32_t totalFiles;
     if (fread(&totalFiles, sizeof(uint32_t), 1, in) != 1) {
@@ -62,6 +66,9 @@ int leerCatalogoArchivoUnificado(const char *archivePath, SharedContext *ctx) {
         if (fread(&t->originalSize, sizeof(uint64_t), 1, in) != 1) break;
         if (fread(&t->compressedSize, sizeof(uint64_t), 1, in) != 1) break;
         if (fread(t->md5Original, 1, 16, in) != 16) break;
+
+        ctx->totalOriginalBytes += t->originalSize;
+        ctx->totalCompressedBytes += t->compressedSize;
 
         t->compressedBuffer = NULL;
     }

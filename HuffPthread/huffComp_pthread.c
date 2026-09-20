@@ -215,6 +215,7 @@ int empaquetarArchivoUnificado(SharedContext *ctx) {
         }
     }
 
+    ctx->archiveFileSize = (uint64_t)ftell(out);
     fclose(out);
 
     // 6. Eliminar archivo u objetivo original si no se especificó -k

@@ -19,14 +19,67 @@ static void imprimirFirmaMD5(const unsigned char *md5, char *outStr) {
     outStr[32] = '\0';
 }
 
+static int guardarEstadisticas(const char *rutaArchivo, SharedContext *ctx,
+                               int ejecutarCompresion, int ejecutarDescompresion,
+                               double tCompresor, double tDescompresor, double tTotal) {
+    FILE *f = fopen(rutaArchivo, "w");
+    if (!f) {
+        perror("Error al crear archivo de estadísticas");
+        return -1;
+    }
+
+    // 1. Porcentaje de salud de la compresión (firmas verificadas / cantidad de archivos)
+    if (ejecutarDescompresion) {
+        double salud = (ctx->taskCount > 0) ? (100.0 * (double)ctx->totalVerifiedFiles / ctx->taskCount) : 0.0;
+        fprintf(f, "porcentaje_salud=%.2f\n", salud);
+        fprintf(f, "firmas_verificadas=%d\n", ctx->totalVerifiedFiles);
+    } else {
+        fprintf(f, "porcentaje_salud=N/A\n");
+        fprintf(f, "firmas_verificadas=0\n");
+    }
+    fprintf(f, "total_archivos=%d\n", ctx->taskCount);
+
+    // 2. Tiempo total de corrida del compresor
+    if (ejecutarCompresion) {
+        fprintf(f, "tiempo_total_compresor=%.4f\n", tCompresor);
+    } else {
+        fprintf(f, "tiempo_total_compresor=N/A\n");
+    }
+
+    // 3. Tiempo total de corrida del descompresor
+    if (ejecutarDescompresion) {
+        fprintf(f, "tiempo_total_descompresor=%.4f\n", tDescompresor);
+    } else {
+        fprintf(f, "tiempo_total_descompresor=N/A\n");
+    }
+
+    // 4. Tamaños y Radio de compresión
+    uint64_t tamComprimidoFinal = (ctx->archiveFileSize > 0) ? ctx->archiveFileSize : ctx->totalCompressedBytes;
+    fprintf(f, "tamano_total_original_bytes=%lu\n", ctx->totalOriginalBytes);
+    fprintf(f, "tamano_archivo_comprimido_bytes=%lu\n", tamComprimidoFinal);
+
+    if (ctx->totalOriginalBytes > 0) {
+        double ratioAhorro = 100.0 * (1.0 - ((double)tamComprimidoFinal / ctx->totalOriginalBytes));
+        fprintf(f, "radio_compresion=%.2f\n", ratioAhorro);
+    } else {
+        fprintf(f, "radio_compresion=0.00\n");
+    }
+
+    fprintf(f, "tiempo_total_ejecucion=%.4f\n", tTotal);
+
+    fclose(f);
+    return 0;
+}
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
-        printf("Uso: %s <directorio_o_archivo.huff> [num_hilos] [modo: -c | -d | -all] [-k | --keep]\n", argv[0]);
+        printf("Uso: %s <directorio_o_archivo.huff> [num_hilos] [modo: -c | -d | -all] [-k | --keep] [-s <stats_file>]\n", argv[0]);
         printf("  num_hilos:  Opcional (por defecto: núcleos del CPU detectados)\n");
         printf("  modo:       -c: Comprimir a un único archivo .huff\n");
         printf("              -d: Descomprimir desde el archivo .huff\n");
         printf("              -all: Ciclo completo (comprime a .huff, extrae y valida MD5)\n");
         printf("  -k, --keep: Opcional: Conservar archivos originales y el .huff\n");
+        printf("  -s, --stats: Opcional: Ruta del archivo para guardar estadísticas (por defecto: estadisticas.txt)\n");
         return 1;
     }
 
@@ -36,12 +89,15 @@ int main(int argc, char* argv[]) {
 
     const char *modo = NULL;
     int keepFiles = 0;
+    const char *statsFile = "estadisticas.txt";
 
     for (int i = 2; i < argc; i++) {
         if (strcmp(argv[i], "-k") == 0 || strcmp(argv[i], "--keep") == 0) {
             keepFiles = 1;
         } else if (strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "-all") == 0) {
             modo = argv[i];
+        } else if ((strcmp(argv[i], "-s") == 0 || strcmp(argv[i], "--stats") == 0) && i + 1 < argc) {
+            statsFile = argv[++i];
         } else {
             int parsed = atoi(argv[i]);
             if (parsed > 0) {
@@ -76,6 +132,7 @@ int main(int argc, char* argv[]) {
 
     double tInicioTotal = obtenerTiempoSegundos();
     double tFrecuencias = 0.0, tArbol = 0.0, tCompresion = 0.0, tEmpaquetado = 0.0, tDescompresion = 0.0;
+    double tLecturaCatalogo = 0.0;
 
     int ejecutarCompresion = (strcmp(modo, "-c") == 0 || strcmp(modo, "-all") == 0);
     int ejecutarDescompresion = (strcmp(modo, "-d") == 0 || strcmp(modo, "-all") == 0);
@@ -159,10 +216,12 @@ int main(int argc, char* argv[]) {
         // abrimos el archivo .huff, leemos su catálogo y reconstruimos el árbol
         if (ctx.taskCount == 0) {
             printf("[INFO] Leyendo catálogo del contenedor unificado '%s'...\n", ctx.archivePath);
+            double t0Cat = obtenerTiempoSegundos();
             if (leerCatalogoArchivoUnificado(ctx.archivePath, &ctx) != 0) {
                 liberarContexto(&ctx);
                 return 1;
             }
+            tLecturaCatalogo = obtenerTiempoSegundos() - t0Cat;
             printf("       -> Archivos contenidos en el catálogo: %d\n\n", ctx.taskCount);
         }
 
@@ -199,32 +258,14 @@ int main(int argc, char* argv[]) {
 
     double tTotal = obtenerTiempoSegundos() - tInicioTotal;
 
-    // Resumen de Métricas
-    printf("====================================================================================================\n");
-    printf("                                   RESUMEN DE RENDIMIENTO                                           \n");
-    printf("====================================================================================================\n");
-    if (ejecutarCompresion) {
-        double ratioGlobal = 0.0;
-        if (ctx.totalOriginalBytes > 0) {
-            ratioGlobal = 100.0 * (1.0 - ((double)ctx.totalCompressedBytes / ctx.totalOriginalBytes));
-        }
-        printf("Bytes originales totales   : %lu bytes\n", ctx.totalOriginalBytes);
-        printf("Bytes comprimidos totales  : %lu bytes\n", ctx.totalCompressedBytes);
-        printf("Ratio de compresión global : %.2f%%\n", ratioGlobal);
+    double tTotalCompresor = tFrecuencias + tArbol + tCompresion + tEmpaquetado;
+    double tTotalDescompresor = tDescompresion + tLecturaCatalogo;
+
+    // Guardar estadísticas en archivo para la GUI
+    if (guardarEstadisticas(statsFile, &ctx, ejecutarCompresion, ejecutarDescompresion,
+                            tTotalCompresor, tTotalDescompresor, tTotal) == 0) {
+        printf("\n[INFO] Estadísticas guardadas exitosamente en '%s' (formato clave=valor para la GUI).\n", statsFile);
     }
-    if (ejecutarDescompresion) {
-        printf("Archivos verificados MD5   : %d / %d (%.2f%%)\n",
-               ctx.totalVerifiedFiles, ctx.taskCount,
-               (ctx.taskCount > 0) ? (100.0 * ctx.totalVerifiedFiles / ctx.taskCount) : 0.0);
-    }
-    printf("----------------------------------------------------------------------------------------------------\n");
-    printf("Tiempo Conteo Frecuencias  : %.4f s\n", tFrecuencias);
-    printf("Tiempo Generación de Árbol : %.6f s\n", tArbol);
-    printf("Tiempo Compresión en RAM   : %.4f s\n", tCompresion);
-    printf("Tiempo Escritura Unificada : %.4f s\n", tEmpaquetado);
-    printf("Tiempo Descompresión       : %.4f s\n", tDescompresion);
-    printf("TIEMPO TOTAL TRANSCURRIDO  : %.4f s\n", tTotal);
-    printf("====================================================================================================\n");
 
     // Limpieza de memoria dinámica
     limpiarTablaCodigos(ctx.HuffmanCodesArray);

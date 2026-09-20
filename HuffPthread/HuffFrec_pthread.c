@@ -26,6 +26,7 @@ int inicializarContexto(SharedContext *ctx, int numThreads, int keepFiles, const
 
     ctx->totalOriginalBytes = 0;
     ctx->totalCompressedBytes = 0;
+    ctx->archiveFileSize = 0;
     ctx->totalFilesProcessed = 0;
     ctx->totalVerifiedFiles = 0;
     ctx->numThreads = numThreads;

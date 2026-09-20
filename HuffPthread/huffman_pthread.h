@@ -48,6 +48,7 @@ typedef struct {
     // Estadísticas globales compartidas
     uint64_t totalOriginalBytes;
     uint64_t totalCompressedBytes;
+    uint64_t archiveFileSize;
     int totalFilesProcessed;
     int totalVerifiedFiles;
     pthread_mutex_t statsMutex;  // Mutex para actualizar estadísticas globales
