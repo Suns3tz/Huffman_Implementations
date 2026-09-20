@@ -56,23 +56,20 @@ void procesarRuta(const char *path) {
 }
 
 
-void extraerfreq(FILE* Freq) { //Extrae las frecuencias guardadas en la tabla de frequencias
-    char linea[100];
+void extraerfreq(FILE* Freq) {
+    char linea[256];
     int valor_hex, frecuencia;
-    char simbolo;
 
-    fgets(linea, sizeof(linea), Freq);
-    fgets(linea, sizeof(linea), Freq);
-
-    fgets(linea, sizeof(linea), Freq);
-    sscanf(linea, " %x | | %d", &valor_hex, &frecuencia);
-    ASCIIcount[0] = frecuencia;
+    memset(ASCIIcount, 0, sizeof(ASCIIcount));
 
     while (fgets(linea, sizeof(linea), Freq)) {
-        if (sscanf(linea, " 0x%02X | '%c' | %d", &valor_hex, &simbolo, &frecuencia) == 3) {
-            ASCIIcount[valor_hex] = frecuencia;
-        } else if (sscanf(linea, " 0x%02X | | %d", &valor_hex, &frecuencia) == 2) {
-            ASCIIcount[valor_hex] = frecuencia;
+        // Intenta buscar el patrón básico: Hexadecimal y Frecuencia
+        if (sscanf(linea, "%x %d", &valor_hex, &frecuencia) == 2 ||
+            sscanf(linea, "0x%x | %*s | %d", &valor_hex, &frecuencia) == 2) {
+            if (valor_hex >= 0 && valor_hex < 256) {
+                ASCIIcount[valor_hex] = frecuencia;
+            }
         }
     }
 }
+

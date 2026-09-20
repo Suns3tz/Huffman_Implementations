@@ -7,14 +7,6 @@
 // Tabla global donde se almacenarán las cadenas de bits ('0' y '1') asignadas a cada byte
 char* HuffmanCodesArray[256] = {NULL};
 
-// Estructura del nodo del árbol y MinHeap
-
-
-typedef struct MinHeap {
-    MinHeapNode** elements;
-    unsigned size;
-    unsigned capacity;
-} MinHeap;
 
 // Funciones de creación de nodos y MinHeap
 MinHeapNode* newNode(unsigned char data, int freq) {
@@ -146,9 +138,14 @@ void generarTablaCodigos(MinHeapNode* root, int arr[], int top) {
         arr[top] = 1; 
         generarTablaCodigos(root->right, arr, top + 1); 
     } 
-    if (isLeaf(root)) { 
-        storeCode(arr, top, root->data); 
-    } 
+    if (isLeaf(root)) {
+    if (top == 0) {
+        arr[0] = 0;
+        storeCode(arr, 1, root->data);
+    } else {
+        storeCode(arr, top, root->data);
+    }
+}
 }
 
 // Libera la memoria consumida por las cadenas dinámicas de códigos
