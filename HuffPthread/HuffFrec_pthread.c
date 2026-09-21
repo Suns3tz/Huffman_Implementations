@@ -29,6 +29,7 @@ int inicializarContexto(SharedContext *ctx, int numThreads, int keepFiles, const
     ctx->archiveFileSize = 0;
     ctx->totalFilesProcessed = 0;
     ctx->totalVerifiedFiles = 0;
+    ctx->implementationId = HUFF_IMPLEMENTATION_ID;
     ctx->numThreads = numThreads;
     ctx->keepFiles = keepFiles;
 

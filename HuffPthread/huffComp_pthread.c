@@ -163,6 +163,10 @@ int empaquetarArchivoUnificado(SharedContext *ctx) {
         return -1;
     }
 
+    // 0. Identificador de Implementación (1 byte / unsigned char) -> 3 para Pthreads
+    unsigned char implId = HUFF_IMPLEMENTATION_ID;
+    fwrite(&implId, sizeof(unsigned char), 1, out);
+
     // 1. Cantidad de Archivos (4 bytes)
     uint32_t count = (uint32_t)ctx->taskCount;
     fwrite(&count, sizeof(uint32_t), 1, out);
@@ -179,7 +183,7 @@ int empaquetarArchivoUnificado(SharedContext *ctx) {
     fwrite(freq32, sizeof(uint32_t), 256, out);
 
     // Calcular dataOffset para cada archivo
-    uint64_t currentOffset = sizeof(uint32_t) + sizeof(uint8_t) + sizeof(uint32_t) * 256;
+    uint64_t currentOffset = sizeof(unsigned char) + sizeof(uint32_t) + sizeof(uint8_t) + sizeof(uint32_t) * 256;
     for (int i = 0; i < ctx->taskCount; i++) {
         uint16_t pathLen = (uint16_t)strlen(ctx->tasks[i].relativePath);
         currentOffset += sizeof(uint16_t) + pathLen + sizeof(uint64_t) * 2 + 16;

@@ -17,6 +17,21 @@ int leerCatalogoArchivoUnificado(const char *archivePath, SharedContext *ctx) {
     ctx->archiveFileSize = (uint64_t)ftell(in);
     fseek(in, 0, SEEK_SET);
 
+    // 0. Identificador de Implementación (1 byte / unsigned char)
+    unsigned char implId = 0;
+    if (fread(&implId, sizeof(unsigned char), 1, in) != 1) {
+        fprintf(stderr, "Error al leer ID de implementación en '%s'.\n", archivePath);
+        fclose(in);
+        return -1;
+    }
+    ctx->implementationId = implId;
+    if (implId != HUFF_IMPLEMENTATION_ID) {
+        fprintf(stderr, "Error: El archivo '%s' tiene ID de implementación %u (se esperaba %u para Pthreads).\n",
+                archivePath, (unsigned int)implId, (unsigned int)HUFF_IMPLEMENTATION_ID);
+        fclose(in);
+        return -1;
+    }
+
     // 1. Cantidad de Archivos (4 bytes)
     uint32_t totalFiles;
     if (fread(&totalFiles, sizeof(uint32_t), 1, in) != 1) {

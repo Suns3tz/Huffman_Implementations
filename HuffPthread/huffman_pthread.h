@@ -7,6 +7,10 @@
 #include <pthread.h>
 #include <sys/stat.h>
 
+// Identificador de Implementación (1 byte / unsigned char)
+// 1 = Serial, 2 = Fork, 3 = Pthreads
+#define HUFF_IMPLEMENTATION_ID 3
+
 // Nodo del árbol de Huffman y MinHeap
 typedef struct MinHeapNode {
     unsigned char data; 
@@ -54,6 +58,7 @@ typedef struct {
     pthread_mutex_t statsMutex;  // Mutex para actualizar estadísticas globales
 
     // Configuración de concurrencia y retención de archivos
+    unsigned char implementationId; // ID de implementación (3 = Pthreads)
     int numThreads;
     int keepFiles;               // 1: Conservar originales y .huff; 0: Eliminar residuos
     int isDirectory;             // 1: se comprimió una carpeta; 0: archivo solitario

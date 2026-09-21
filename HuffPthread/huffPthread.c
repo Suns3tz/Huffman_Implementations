@@ -28,6 +28,9 @@ static int guardarEstadisticas(const char *rutaArchivo, SharedContext *ctx,
         return -1;
     }
 
+    // 0. Identificador de Implementación
+    fprintf(f, "id_implementacion=%u\n", (unsigned int)ctx->implementationId);
+
     // 1. Porcentaje de salud de la compresión (firmas verificadas / cantidad de archivos)
     if (ejecutarDescompresion) {
         double salud = (ctx->taskCount > 0) ? (100.0 * (double)ctx->totalVerifiedFiles / ctx->taskCount) : 0.0;
