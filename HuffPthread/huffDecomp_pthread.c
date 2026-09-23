@@ -17,9 +17,9 @@ int leerCatalogoArchivoUnificado(const char *archivePath, SharedContext *ctx) {
     ctx->archiveFileSize = (uint64_t)ftell(in);
     fseek(in, 0, SEEK_SET);
 
-    // 0. Identificador de Implementación (1 byte / unsigned char)
-    unsigned char implId = 0;
-    if (fread(&implId, sizeof(unsigned char), 1, in) != 1) {
+    // 0. Identificador de Implementación (1 byte / uint8_t)
+    uint8_t implId = 0;
+    if (fread(&implId, sizeof(uint8_t), 1, in) != 1) {
         fprintf(stderr, "Error al leer ID de implementación en '%s'.\n", archivePath);
         fclose(in);
         return -1;

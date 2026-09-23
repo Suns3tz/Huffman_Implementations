@@ -21,15 +21,12 @@ static void imprimirFirmaMD5(const unsigned char *md5, char *outStr) {
 
 static int guardarEstadisticas(const char *rutaArchivo, SharedContext *ctx,
                                int ejecutarCompresion, int ejecutarDescompresion,
-                               double tCompresor, double tDescompresor, double tTotal) {
+                               double tCompresor, double tDescompresor) {
     FILE *f = fopen(rutaArchivo, "w");
     if (!f) {
         perror("Error al crear archivo de estadísticas");
         return -1;
     }
-
-    // 0. Identificador de Implementación
-    fprintf(f, "id_implementacion=%u\n", (unsigned int)ctx->implementationId);
 
     // 1. Porcentaje de salud de la compresión (firmas verificadas / cantidad de archivos)
     if (ejecutarDescompresion) {
@@ -56,19 +53,20 @@ static int guardarEstadisticas(const char *rutaArchivo, SharedContext *ctx,
         fprintf(f, "tiempo_total_descompresor=N/A\n");
     }
 
-    // 4. Tamaños y Radio de compresión
-    uint64_t tamComprimidoFinal = (ctx->archiveFileSize > 0) ? ctx->archiveFileSize : ctx->totalCompressedBytes;
+    // 4. Tamaño total de los archivos originales
     fprintf(f, "tamano_total_original_bytes=%lu\n", ctx->totalOriginalBytes);
+
+    // 5. Tamaño del archivo comprimido
+    uint64_t tamComprimidoFinal = (ctx->archiveFileSize > 0) ? ctx->archiveFileSize : ctx->totalCompressedBytes;
     fprintf(f, "tamano_archivo_comprimido_bytes=%lu\n", tamComprimidoFinal);
 
+    // 6. Radio de compresión
     if (ctx->totalOriginalBytes > 0) {
         double ratioAhorro = 100.0 * (1.0 - ((double)tamComprimidoFinal / ctx->totalOriginalBytes));
         fprintf(f, "radio_compresion=%.2f\n", ratioAhorro);
     } else {
         fprintf(f, "radio_compresion=0.00\n");
     }
-
-    fprintf(f, "tiempo_total_ejecucion=%.4f\n", tTotal);
 
     fclose(f);
     return 0;
@@ -133,7 +131,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    double tInicioTotal = obtenerTiempoSegundos();
     double tFrecuencias = 0.0, tArbol = 0.0, tCompresion = 0.0, tEmpaquetado = 0.0, tDescompresion = 0.0;
     double tLecturaCatalogo = 0.0;
 
@@ -259,14 +256,12 @@ int main(int argc, char* argv[]) {
         printf("      -> Extracción y verificación finalizada en %.4f s\n\n", tDescompresion);
     }
 
-    double tTotal = obtenerTiempoSegundos() - tInicioTotal;
-
     double tTotalCompresor = tFrecuencias + tArbol + tCompresion + tEmpaquetado;
     double tTotalDescompresor = tDescompresion + tLecturaCatalogo;
 
     // Guardar estadísticas en archivo para la GUI
     if (guardarEstadisticas(statsFile, &ctx, ejecutarCompresion, ejecutarDescompresion,
-                            tTotalCompresor, tTotalDescompresor, tTotal) == 0) {
+                            tTotalCompresor, tTotalDescompresor) == 0) {
         printf("\n[INFO] Estadísticas guardadas exitosamente en '%s' (formato clave=valor para la GUI).\n", statsFile);
     }
 
