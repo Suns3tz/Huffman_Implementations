@@ -191,7 +191,7 @@ void on_btn_stats_clicked(GtkWidget *widget, gpointer window_padre) {
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook), panelConcurrente, gtk_label_new("Concurrente"));
 
     // 3. Pestaña Paralelo 
-    GtkWidget *panelParalelo = crearPanelModulo("stats_paralelo","stats_serial", "Paralelo");
+    GtkWidget *panelParalelo = crearPanelModulo("stats_fork","stats_serial", "Paralelo");
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook), panelParalelo, gtk_label_new("Paralelo"));
 
     gtk_container_add(GTK_CONTAINER(ventanaResultados), notebook);
@@ -244,6 +244,19 @@ void on_btn_run_clicked(GtkWidget *widget, gpointer data) {
 		}
 	}
     
+    char cmd_fork[3000];
+    snprintf(cmd_fork, sizeof(cmd_fork),
+		"../HuffFork/huffFork -all \"%s\"", carpeta_seleccionada);
+	
+	int res_fork = system(cmd_fork);
+	if(res_fork == 0) {
+		if(btn_stats) {
+			gtk_widget_set_sensitive(btn_stats, TRUE);
+		}else{
+			perror("Error al ejecutar el modulo pthread");
+		}
+	}
+		
     
 
     g_free(nombre_base);
