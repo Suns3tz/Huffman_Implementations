@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <dirent.h> //Adiccion para usar directorios.
+#include <dirent.h> //Uso de directorios
 #include <sys/stat.h> //Diferenciar entre archivos y carpetas
 
 #include "huffman.h"
@@ -26,10 +26,10 @@ void procesarRuta(const char *path) {
 		return;
 	}
 	
-	if (S_ISREG(st.st_mode)) {
+	if (S_ISREG(st.st_mode)){ //Si es un archivo
 		FILE *input = fopen(path, "rb");
 		if (input != NULL) {
-			countfreq(input);
+			countfreq(input); //Abre el archivo y lo hace contar las frecuencias
 			fclose(input);
 		} else{
 			perror("Error abriendo el archivo");
@@ -49,30 +49,27 @@ void procesarRuta(const char *path) {
 				continue;
 			}
 			snprintf(subPath, sizeof(subPath), "%s/%s", path, entry->d_name);
-			procesarRuta(subPath);
+			procesarRuta(subPath); //Pasarle archivos dentro del directorio
 		}
 		closedir(dir);
 	}
 }
 
 
-void extraerfreq(FILE* Freq) { //Extrae las frecuencias guardadas en la tabla de frequencias
-    char linea[100];
+void extraerfreq(FILE* Freq) {
+    char linea[256];
     int valor_hex, frecuencia;
-    char simbolo;
 
-    fgets(linea, sizeof(linea), Freq);
-    fgets(linea, sizeof(linea), Freq);
-
-    fgets(linea, sizeof(linea), Freq);
-    sscanf(linea, " %x | | %d", &valor_hex, &frecuencia);
-    ASCIIcount[0] = frecuencia;
+    memset(ASCIIcount, 0, sizeof(ASCIIcount));
 
     while (fgets(linea, sizeof(linea), Freq)) {
-        if (sscanf(linea, " 0x%02X | '%c' | %d", &valor_hex, &simbolo, &frecuencia) == 3) {
-            ASCIIcount[valor_hex] = frecuencia;
-        } else if (sscanf(linea, " 0x%02X | | %d", &valor_hex, &frecuencia) == 2) {
-            ASCIIcount[valor_hex] = frecuencia;
+        // Intenta buscar el patrón básico: Hexadecimal y Frecuencia
+        if (sscanf(linea, "%x %d", &valor_hex, &frecuencia) == 2 ||
+            sscanf(linea, "0x%x | %*s | %d", &valor_hex, &frecuencia) == 2) {
+            if (valor_hex >= 0 && valor_hex < 256) {
+                ASCIIcount[valor_hex] = frecuencia;
+            }
         }
     }
 }
+

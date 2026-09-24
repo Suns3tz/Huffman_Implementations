@@ -4,164 +4,271 @@
 #include <stdint.h>
 #include <dirent.h>
 #include <sys/stat.h>
-#include <openssl/md5.h> // Necesario para MD5 (-lcrypto al compilar)
+#include <openssl/md5.h>
 
 #include "huffman.h"
 
 extern char* HuffmanCodesArray[256];
+extern int ASCIIcount[256];
 
-// Calcula los 16 bytes de la firma MD5 de un archivo
-void calcularMD5(const char *rutaArchivo, unsigned char *output) {
-    FILE *archivo = fopen(rutaArchivo, "rb");
-    if (!archivo) return;
 
-    MD5_CTX mdContext;
-    unsigned char buffer[1024];
+void initCatalogo(ListaCatalogo *cat) {
+    cat->cantidad = 0;
+    cat->capacidad = 16;
+    cat->elementos = (MetadatoNodo*)malloc(cat->capacidad * sizeof(MetadatoNodo));
+}
+
+void agregarCatalogo(ListaCatalogo *cat, MetadatoNodo nodo) {
+    if (cat->cantidad >= cat->capacidad) {
+        cat->capacidad *= 2;
+        cat->elementos = (MetadatoNodo*)realloc(cat->elementos, cat->capacidad * sizeof(MetadatoNodo));
+    }
+    cat->elementos[cat->cantidad++] = nodo;
+}
+
+void freeCatalogo(ListaCatalogo *cat) {
+    free(cat->elementos);
+}
+
+//Calcular MD5 del Archivo
+static int calcularMD5Archivo(const char *rutaArchivo, unsigned char *md5Out) {
+    FILE *f = fopen(rutaArchivo, "rb");
+    if (!f) return 0;
+
+    MD5_CTX ctx;
+    MD5_Init(&ctx);
+
+    unsigned char buffer[8192];
     size_t bytes;
-
-    MD5_Init(&mdContext);
-    while ((bytes = fread(buffer, 1, sizeof(buffer), archivo)) > 0) {
-        MD5_Update(&mdContext, buffer, bytes);
+    while ((bytes = fread(buffer, 1, sizeof(buffer), f)) > 0) {
+        MD5_Update(&ctx, buffer, bytes);
     }
-    MD5_Final(output, &mdContext);
+    MD5_Final(md5Out, &ctx);
 
-    fclose(archivo);
+    fclose(f);
+    return 1;
 }
 
-long countC(FILE* archivo) {
-    fseek(archivo, 0, SEEK_END);
-    long size = ftell(archivo);
-    fseek(archivo, 0, SEEK_SET); 
-    return size;
-}
 
-// Imprime la tabla comparativa incluyendo el Hash MD5 formateado a Hexadecimal
-void writeCompressionTable(const char* originalFileName, long originalSize, long compressedSize, const unsigned char* md5) {
-    double compressionPercentage = 0.0;
-    if (originalSize > 0) {
-        compressionPercentage = 100.0 * (1.0 - ((double)compressedSize / originalSize));
+// Explorar estructura, calcular MD5s y contar frecuencias
+
+void explorarYContar(const char *rutaBase, const char *subRuta, ListaCatalogo *cat) {
+    char rutaCompleta[1024];
+    if (subRuta && strlen(subRuta) > 0) {
+        snprintf(rutaCompleta, sizeof(rutaCompleta), "%s/%s", rutaBase, subRuta);
+    } else {
+        snprintf(rutaCompleta, sizeof(rutaCompleta), "%s", rutaBase);
     }
 
-    char md5String[33];
-    for (int i = 0; i < 16; i++) {
-        sprintf(&md5String[i * 2], "%02x", md5[i]);
-    }
-
-    printf("| %-20s | %-32s | %-10ld | %-10ld | %6.2f%% |\n", 
-            originalFileName, md5String, originalSize, compressedSize, compressionPercentage);
-    printf("----------------------------------------------------------------------------------------------------\n");
-}
-
-void writeheader3byte(FILE* archivo, long cant) {
-    unsigned char byte1 = (cant >> 16) & 0xFF;
-    unsigned char byte2 = (cant >> 8) & 0xFF;
-    unsigned char byte3 =  cant & 0xFF;   
-    fputc(byte1, archivo);
-    fputc(byte2, archivo);
-    fputc(byte3, archivo);
-}
-
-void changeExtension(const char* OgName, char* NewName) {
-    strcpy(NewName, OgName);
-    char *extension = strrchr(NewName, '.');
-    if (extension != NULL) {
-        *extension = '\0';
-    }
-    strcat(NewName, ".huff");
-}
-
-void Compress(FILE* inFile, FILE* outFile) {
-    int bitBuffer = 0;  
-    int bitCount = 0;   
-    int currentByte;
-    
-    while ((currentByte = fgetc(inFile)) != EOF) {
-        const char *huffCode = HuffmanCodesArray[(unsigned char)currentByte];
-
-        if (huffCode == NULL) continue;
-
-        for (int i = 0; huffCode[i] != '\0'; i++) {
-            bitBuffer <<= 1;             
-            if (huffCode[i] == '1') {
-                bitBuffer |= 1;         
-            }
-            bitCount++;
-            if (bitCount == 8) {
-                fputc(bitBuffer, outFile);
-                bitBuffer = 0;  
-                bitCount = 0;   
-            }
-        }
-    }
-
-    if (bitCount > 0) {
-        bitBuffer <<= (8 - bitCount); 
-        fputc(bitBuffer, outFile);
-    }
-}
-
-void comprimirArchivoIndividual(const char* rutaArchivo) {
-    FILE *IN = fopen(rutaArchivo, "rb");
-    if (IN == NULL) {
-        perror("Error al abrir archivo para comprimir");
-        return;
-    }
-
-    char NewName[1024];
-    changeExtension(rutaArchivo, NewName);
-
-    FILE *OUT = fopen(NewName, "wb");
-    if (OUT == NULL) {
-        perror("Error al crear archivo comprimido .huff");
-        fclose(IN);
-        return;
-    }
-
-    long originalSize = countC(IN);
-
-    // 1. Escribir tamaño de archivo (3 bytes de encabezado)
-    writeheader3byte(OUT, originalSize);
-
-    // 2. Calcular y ESCRIBIR LA FIRMA MD5 (16 bytes) EN LOS METADATOS DEL ARCHIVO
-    unsigned char md5Hash[16];
-    calcularMD5(rutaArchivo, md5Hash);
-    fwrite(md5Hash, 1, 16, OUT);
-
-    // 3. Comprimir contenido
-    rewind(IN);
-    Compress(IN, OUT);
-
-    long newSize = countC(OUT);
-
-    fclose(IN);
-    fclose(OUT);
-
-    writeCompressionTable(rutaArchivo, originalSize, newSize, md5Hash);
-}
-
-void comprimirRutaRecursiva(const char *path) {
     struct stat st;
-    if (stat(path, &st) != 0) return;
+    if (stat(rutaCompleta, &st) != 0) return;
 
-    if (S_ISREG(st.st_mode)) {
-        if (strstr(path, ".huff") == NULL) {
-            comprimirArchivoIndividual(path);
-        }
-    } 
-    else if (S_ISDIR(st.st_mode)) {
-        DIR *dir = opendir(path);
-        if (dir == NULL) return;
+    MetadatoNodo nodo;
+    memset(&nodo, 0, sizeof(MetadatoNodo));
+
+    // Determinar la ruta relativa a guardar en el archivo
+    const char *nombreRelativo = (subRuta && strlen(subRuta) > 0) ? subRuta : strrchr(rutaBase, '/');
+    if (nombreRelativo && nombreRelativo[0] == '/') nombreRelativo++;
+    if (!nombreRelativo) nombreRelativo = rutaBase;
+
+    strncpy(nodo.ruta_relativa, nombreRelativo, sizeof(nodo.ruta_relativa) - 1);
+    nodo.len_ruta = (uint16_t)strlen(nodo.ruta_relativa);
+
+    if (S_ISDIR(st.st_mode)) {
+        nodo.es_directorio = 1;
+        nodo.tam_original = 0;
+        memset(nodo.md5, 0, 16); // Las carpetas no llevan firma MD5
+        agregarCatalogo(cat, nodo);
+
+        DIR *dir = opendir(rutaCompleta);
+        if (!dir) return;
 
         struct dirent *entry;
-        char subPath[1024];
-
         while ((entry = readdir(dir)) != NULL) {
-            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
-                continue;
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+
+            char nuevaSubRuta[1024];
+            if (subRuta && strlen(subRuta) > 0) {
+                snprintf(nuevaSubRuta, sizeof(nuevaSubRuta), "%s/%s", subRuta, entry->d_name);
+            } else {
+                snprintf(nuevaSubRuta, sizeof(nuevaSubRuta), "%s", entry->d_name);
             }
-            snprintf(subPath, sizeof(subPath), "%s/%s", path, entry->d_name);
-            comprimirRutaRecursiva(subPath);
+            explorarYContar(rutaBase, nuevaSubRuta, cat);
         }
         closedir(dir);
+    } else if (S_ISREG(st.st_mode)) {
+        // Evitar empaquetar archivos .huff preexistentes
+        if (strstr(rutaCompleta, ".huff") != NULL) return;
+
+        nodo.es_directorio = 0;
+        nodo.tam_original = st.st_size;
+
+        //  CALCULAR MD5 ÚNICO DEL ARCHIVO ACTUAL
+        if (!calcularMD5Archivo(rutaCompleta, nodo.md5)) {
+            fprintf(stderr, "Advertencia: No se pudo generar MD5 para %s\n", rutaCompleta);
+            memset(nodo.md5, 0, 16);
+        }
+
+        agregarCatalogo(cat, nodo);
+
+        // Contar frecuencias para el árbol global de Huffman
+        FILE *in = fopen(rutaCompleta, "rb");
+        if (in) {
+            unsigned char buffer[4096];
+            size_t bytes;
+            while ((bytes = fread(buffer, 1, sizeof(buffer), in)) > 0) {
+                for (size_t i = 0; i < bytes; i++) {
+                    ASCIIcount[buffer[i]]++;
+                }
+            }
+            fclose(in);
+        }
     }
+}
+
+
+void escribirTablaFrecuencias(FILE *outFile) {
+    uint8_t simbolosPresentes = 0;
+    for (int i = 0; i < 256; i++) {
+        if (ASCIIcount[i] > 0) simbolosPresentes++;
+    }
+
+    fputc(simbolosPresentes, outFile);
+
+    for (int i = 0; i < 256; i++) {
+        if (ASCIIcount[i] > 0) {
+            uint8_t simbolo = (uint8_t)i;
+            uint32_t freq = (uint32_t)ASCIIcount[i];
+            fputc(simbolo, outFile);
+            fwrite(&freq, sizeof(uint32_t), 1, outFile);
+        }
+    }
+}
+
+void comprimirContenidoArchivo(FILE *inFile, FILE *outFile, int *bitBuffer, int *bitCount) {
+    int currentByte;
+    while ((currentByte = fgetc(inFile)) != EOF) {
+        const char *huffCode = HuffmanCodesArray[(unsigned char)currentByte];
+        if (!huffCode) continue;
+
+        for (int i = 0; huffCode[i] != '\0'; i++) {
+            *bitBuffer <<= 1;
+            if (huffCode[i] == '1') {
+                *bitBuffer |= 1;
+            }
+            (*bitCount)++;
+            if (*bitCount == 8) {
+                fputc(*bitBuffer, outFile);
+                *bitBuffer = 0;
+                *bitCount = 0;
+            }
+        }
+    }
+}
+
+
+void comprimirDirectorioUnico(const char *rutaOrigen, const char *archivoSalidaHuff) {
+    // 1. Asegurar extensión .huff
+    char nombreFinalSalida[1024];
+    size_t len = strlen(archivoSalidaHuff);
+
+    if (len < 5 || strcmp(archivoSalidaHuff + len - 5, ".huff") != 0) {
+        snprintf(nombreFinalSalida, sizeof(nombreFinalSalida), "%s.huff", archivoSalidaHuff);
+    } else {
+        snprintf(nombreFinalSalida, sizeof(nombreFinalSalida), "%s", archivoSalidaHuff);
+    }
+
+    ListaCatalogo cat;
+    initCatalogo(&cat);
+
+    memset(ASCIIcount, 0, sizeof(ASCIIcount));
+
+    printf("Analizando estructura de carpetas, MD5s y frecuencias...\n");
+    explorarYContar(rutaOrigen, "", &cat);
+
+    if (cat.cantidad == 0) {
+        printf("Error: No se encontraron elementos válidos para comprimir.\n");
+        freeCatalogo(&cat);
+        return;
+    }
+
+    MinHeapNode* root = buildHuffmanTree(ASCIIcount);
+    int bitArray[256];
+    generarTablaCodigos(root, bitArray, 0);
+
+    FILE *out = fopen(nombreFinalSalida, "wb");
+    if (!out) {
+        perror("Error al crear el paquete .huff");
+        freeCatalogo(&cat);
+        liberarArbol(root);
+        return;
+    }
+
+    // 1. ENCABEZADO GLOBAL ( ID + Magic "HUFF" + Versión 0x01)
+    
+    
+    uint8_t id_algoritmo = 1;
+    fputc(id_algoritmo, out);
+    
+    fwrite(MAGIC_HEADER, 1, 4, out);
+    uint8_t version = 0x01;
+    fputc(version, out);
+
+    // Reservar 16 bytes vacíos para el Hash MD5 global
+    unsigned char md5Dummy[16] = {0};
+    fwrite(md5Dummy, 1, 16, out);
+
+    // 2. TABLA DE FRECUENCIAS
+    escribirTablaFrecuencias(out);
+
+    // 3. CATÁLOGO / DIRECTORIO DE METADATOS
+    uint32_t totalElementos = (uint32_t)cat.cantidad;
+    fwrite(&totalElementos, sizeof(uint32_t), 1, out);
+
+    for (size_t i = 0; i < cat.cantidad; i++) {
+        fputc(cat.elementos[i].es_directorio, out);
+        fwrite(&cat.elementos[i].len_ruta, sizeof(uint16_t), 1, out);
+        fwrite(cat.elementos[i].ruta_relativa, 1, cat.elementos[i].len_ruta, out);
+        fwrite(&cat.elementos[i].tam_original, sizeof(uint64_t), 1, out);
+        fwrite(cat.elementos[i].md5, 1, 16, out); 
+    }
+
+    // 4. CUERPO DE DATOS COMPRIMIDOS (Bitstream)
+    int bitBuffer = 0;
+    int bitCount = 0;
+
+    for (size_t i = 0; i < cat.cantidad; i++) {
+        if (!cat.elementos[i].es_directorio) {
+            char rutaFisica[2048];
+
+            if (strncmp(cat.elementos[i].ruta_relativa, rutaOrigen, strlen(rutaOrigen)) == 0) {
+                snprintf(rutaFisica, sizeof(rutaFisica), "%s", cat.elementos[i].ruta_relativa);
+            } else {
+                snprintf(rutaFisica, sizeof(rutaFisica), "%s/%s", rutaOrigen, cat.elementos[i].ruta_relativa);
+            }
+
+            FILE *in = fopen(rutaFisica, "rb");
+            if (!in) {
+                fprintf(stderr, "Error: No se pudo abrir '%s' para comprimir\n", rutaFisica);
+                continue;
+            }
+
+            comprimirContenidoArchivo(in, out, &bitBuffer, &bitCount);
+            fclose(in);
+        }
+    }
+
+    // Flush de los bits restantes
+    if (bitCount > 0) {
+        bitBuffer <<= (8 - bitCount);
+        fputc(bitBuffer, out);
+    }
+
+    fclose(out);
+
+    liberarArbol(root);
+    limpiarTablaCodigos();
+    freeCatalogo(&cat);
+
+    printf("¡Empaquetado y compresión completados con éxito en '%s'!\n", nombreFinalSalida);
 }
